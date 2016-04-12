@@ -20,11 +20,11 @@
     None
 
 .NOTES
-    Version:      1.0
+    Version:      1.2
     Author:       Ian Leonard
     Copyright:    2016
     License:      GNU General Public License v3.0
-    Release Date: 2016-02-09
+    Release Date: 2016-04-11
 
 .LINK
     https://github.com/antonlacon/powershell-scripts
@@ -53,10 +53,24 @@ function Add-DirectoryToList {
             $Script:List_Of_Directories += $Test_Object
         }
         else {
-            Write-Warning 'Abort: '$Test_Object' is not a directory.'
+            Write-Error 'Abort: '$Test_Object' is not a directory.'
             Exit 1
         }
     }
+}
+
+# Report-DataSizeAndOnDisk:
+# Parse Compact.exe's query output and convert output strings to integers
+function Report-DataSizeAndOnDisk( $Test_Object ) {
+    # Compact's query is verbose; only interested in the 3rd to last line of output
+    $Directory_Status=@(Compact /q /s:$Test_Object | Select -Last 3 | Select -First 1 )
+    $Directory_Status=$Directory_Status -Split '\s+'
+    # First(0) 'word' is Data Size. Ninth(8) 'word' is Size on Disk.
+    # Convert Strings to Numbers (long == int64)
+    $Directory_Status[0]=$Directory_Status[0] -replace '[,]'
+    [long]$Directory_Status[0]
+    $Directory_Status[8]=$Directory_Status[8] -replace '[,]'
+    [long]$Directory_Status[8]
 }
 
 ### MAIN ###
@@ -66,13 +80,13 @@ Add-DirectoryToList $Steam_Game_Directory $Origin_Game_Directory
 # Compress each directory in turn
 if ( $List_Of_Directories.length -ne 0 ) {
     Foreach( $Directory in $List_Of_Directories ) {
-        # Compact's query is verbose; only interested in the 3rd to last line of output
-        $Directory_Status=@(Compact /q /s:$Directory | Select -Last 3 | Select -First 1 )
-        $Directory_Status=$Directory_Status -Split '\s+'
+
+        # Query each directory to determine if it is already compressed
+        $Directory_Size = Report-DataSizeAndOnDisk $Directory
+        # Directory_Size[0] == Data Size, Directory_Size[1] == Size on Disk
 
         # If sizes match, data is uncompressed; proceed with compressing
-        # First(0) 'word' is Data Payload Size. Ninth(8) 'word' is Size on Disk.
-        if ( $Directory_Status[0] -eq $Directory_Status[8] ) {
+        if ( $Directory_Size[0] -eq $Directory_Size[1] -And $Directory_Size[0] -ne 0 ) {
             Compact /c /exe:$Compression_Method /s:$Directory
         }
         # Otherwise some data is compressed; check for uncompressed subdirectories
@@ -81,19 +95,19 @@ if ( $List_Of_Directories.length -ne 0 ) {
             Foreach( $Subdirectory in $List_of_Subdirectories ) {
 
                 # Query each subdirectory to determine if it is already compressed
-                $Query_Output=@( Compact /q /s:"$Directory\$Subdirectory" | Select -Last 3 | Select -First 1 )
-                $Query_Output=$Query_Output -Split '\s+'
+                $Directory_Size = Report-DataSizeAndOnDisk $Directory\$Subdirectory
+                # Directory_Size[0] == Data Size, Directory_Size[1] == Size on Disk
 
                 # If sizes match, data is uncompressed; proceed with compressing
-                if ( $Query_Output[0] -eq $Query_Output[8] ) {
-                    Compact /c /exe:$Compression_Method /s:"$Directory\$Subdirectory"
+                if ( $Directory_Size[0] -eq $Directory_Size[1] -And $Directory_Size[0] -ne 0 ) {
+                    Compact /c /exe:$Compression_Method /s:$Directory\$Subdirectory
                 }
             }
         }
     }
 }
 else {
-    Write-Warning 'Abort: No directories found to compress.'
+    Write-Error 'Abort: No directories found to compress.'
     Exit 1
 }
 
